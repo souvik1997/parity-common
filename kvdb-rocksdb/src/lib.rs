@@ -44,7 +44,7 @@ use interleaved_ordered::{interleave_ordered, InterleaveOrdered};
 
 use elastic_array::ElasticArray32;
 use fs_swap::{swap, swap_nonatomic};
-use kvdb::{KeyValueDB, DBTransaction, DBValue, DBOp};
+use kvdb::{KeyValueDB, DBTransaction, DBValue, DBOp, DBStats};
 
 #[cfg(target_os = "linux")]
 use regex::Regex;
@@ -258,6 +258,7 @@ pub struct Database {
 	// Prevents concurrent flushes.
 	// Value indicates if a flush is in progress.
 	flushing_lock: Mutex<bool>,
+	stats: RwLock<DBStats>,
 }
 
 #[inline]
@@ -389,6 +390,7 @@ impl Database {
 			path: path.to_owned(),
 			read_opts: read_opts,
 			block_opts: block_opts,
+			stats: RwLock::new(DBStats::default()),
 		})
 	}
 
@@ -432,15 +434,21 @@ impl Database {
 								KeyState::Delete => {
 									if c > 0 {
 										batch.delete_cf(cfs[c - 1], key).map_err(other_io_err)?;
+										self.stats.write().write_ops += 1;
 									} else {
 										batch.delete(key).map_err(other_io_err)?;
+										self.stats.write().write_ops += 1;
 									}
 								},
 								KeyState::Insert(ref value) => {
 									if c > 0 {
 										batch.put_cf(cfs[c - 1], key, value).map_err(other_io_err)?;
+										self.stats.write().write_ops += 1;
+										self.stats.write().write_bytes += value.len();
 									} else {
 										batch.put(key, value).map_err(other_io_err)?;
+										self.stats.write().write_ops += 1;
+										self.stats.write().write_bytes += value.len();
 									}
 								},
 							}
@@ -486,17 +494,20 @@ impl Database {
 				for op in ops {
 					// remove any buffered operation for this key
 					self.overlay.write()[Self::to_overlay_column(op.col())].remove(op.key());
-
+					self.stats.write().write_ops += 1;
 					match op {
-						DBOp::Insert { col, key, value } => match col {
-							None => batch.put(&key, &value).map_err(other_io_err)?,
-							Some(c) => batch.put_cf(cfs[c as usize], &key, &value).map_err(other_io_err)?,
+						DBOp::Insert { col, key, value } => {
+							self.stats.write().write_bytes += value.len();
+							match col {
+								None => batch.put(&key, &value).map_err(other_io_err)?,
+								Some(c) => batch.put_cf(cfs[c as usize], &key, &value).map_err(other_io_err)?,
+							}
 						},
 						DBOp::Delete { col, key } => match col {
 							None => batch.delete(&key).map_err(other_io_err)?,
 							Some(c) => batch.delete_cf(cfs[c as usize], &key).map_err(other_io_err)?,
 						}
-					}
+					};
 				}
 
 				check_for_corruption(&self.path, db.write_opt(batch, &self.write_opts))
@@ -520,8 +531,8 @@ impl Database {
 							Some(&KeyState::Delete) => Ok(None),
 							None => {
 								col.map_or_else(
-									|| db.get_opt(key, &self.read_opts).map(|r| r.map(|v| DBValue::from_slice(&v))),
-									|c| db.get_cf_opt(cfs[c as usize], key, &self.read_opts).map(|r| r.map(|v| DBValue::from_slice(&v))))
+									|| { self.stats.write().read_ops += 1; db.get_opt(key, &self.read_opts).map(|r| r.map(|v| { self.stats.write().read_bytes += v.len(); DBValue::from_slice(&v) }))},
+									|c| { self.stats.write().read_ops += 1; db.get_cf_opt(cfs[c as usize], key, &self.read_opts).map(|r| r.map(|v| {self.stats.write().read_bytes += v.len(); DBValue::from_slice(&v)})) })
 									.map_err(other_io_err)
 							},
 						}
@@ -702,6 +713,10 @@ impl KeyValueDB for Database {
 
 	fn restore(&self, new_db: &str) -> io::Result<()> {
 		Database::restore(self, new_db)
+	}
+
+	fn stats(&self) -> Option<DBStats> {
+		Some(self.stats.read().clone())
 	}
 }
 

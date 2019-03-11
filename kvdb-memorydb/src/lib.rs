@@ -20,7 +20,7 @@ extern crate kvdb;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use parking_lot::RwLock;
-use kvdb::{DBValue, DBTransaction, KeyValueDB, DBOp};
+use kvdb::{DBValue, DBTransaction, KeyValueDB, DBOp, DBStats};
 
 /// A key-value database fulfilling the `KeyValueDB` trait, living in memory.
 /// This is generally intended for tests and is not particularly optimized.
@@ -115,4 +115,6 @@ impl KeyValueDB for InMemory {
 	fn restore(&self, _new_db: &str) -> io::Result<()> {
 		Err(io::Error::new(io::ErrorKind::Other, "Attempted to restore in-memory database"))
 	}
+
+	fn stats(&self) -> Option<DBStats> { None }
 }

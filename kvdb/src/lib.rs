@@ -52,6 +52,37 @@ pub enum DBOp {
 	}
 }
 
+#[derive(Default, Clone, Copy, Eq, Debug, PartialEq)]
+pub struct DBStats {
+	pub read_ops: usize,
+	pub read_bytes: usize,
+	pub write_ops: usize,
+	pub write_bytes: usize
+}
+
+impl<'a> ::std::ops::Sub<&'a DBStats> for DBStats {
+	type Output = Self;
+
+	fn sub(mut self, other: &'a DBStats) -> Self {
+		self.read_ops -= other.read_ops;
+		self.read_bytes -= other.read_bytes;
+		self.write_ops -= other.write_ops;
+		self.write_bytes = other.write_bytes;
+
+		self
+	}
+}
+
+impl<'a> ::std::ops::SubAssign<&'a DBStats> for DBStats {
+
+	fn sub_assign(&mut self, other: &'a DBStats) {
+		self.read_ops -= other.read_ops;
+		self.read_bytes -= other.read_bytes;
+		self.write_ops -= other.write_ops;
+		self.write_bytes = other.write_bytes;
+	}
+}
+
 impl DBOp {
 	/// Returns the key associated with this operation.
 	pub fn key(&self) -> &[u8] {
@@ -165,6 +196,8 @@ pub trait KeyValueDB: Sync + Send {
 
 	/// Attempt to replace this database with a new one located at the given path.
 	fn restore(&self, new_db: &str) -> io::Result<()>;
+
+	fn stats(&self) -> Option<DBStats>;
 }
 
 /// Generic key-value database handler. This trait contains one function `open`. When called, it opens database with a
