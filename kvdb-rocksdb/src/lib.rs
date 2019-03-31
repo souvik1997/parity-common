@@ -434,10 +434,14 @@ impl Database {
 								KeyState::Delete => {
 									if c > 0 {
 										batch.delete_cf(cfs[c - 1], key).map_err(other_io_err)?;
-										self.stats.write().write_ops += 1;
+										let deleted_len = db.get_cf_opt(cfs[c - 1], key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
+										self.stats.write().delete_ops += 1;
+										self.stats.write().delete_bytes += deleted_len;
 									} else {
 										batch.delete(key).map_err(other_io_err)?;
-										self.stats.write().write_ops += 1;
+										let deleted_len = db.get_opt(key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
+										self.stats.write().delete_ops += 1;
+										self.stats.write().delete_bytes += deleted_len;
 									}
 								},
 								KeyState::Insert(ref value) => {
@@ -498,14 +502,25 @@ impl Database {
 					match op {
 						DBOp::Insert { col, key, value } => {
 							self.stats.write().write_bytes += value.len();
+							self.stats.write().write_ops += 1;
 							match col {
 								None => batch.put(&key, &value).map_err(other_io_err)?,
 								Some(c) => batch.put_cf(cfs[c as usize], &key, &value).map_err(other_io_err)?,
 							}
 						},
 						DBOp::Delete { col, key } => match col {
-							None => batch.delete(&key).map_err(other_io_err)?,
-							Some(c) => batch.delete_cf(cfs[c as usize], &key).map_err(other_io_err)?,
+							None => {
+								let deleted_len = db.get_opt(&key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
+								self.stats.write().delete_bytes += deleted_len;
+								self.stats.write().delete_ops += 1;
+								batch.delete(&key).map_err(other_io_err)?
+							},
+							Some(c) => {
+								let deleted_len = db.get_cf_opt(cfs[c as usize], &key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
+								self.stats.write().delete_bytes += deleted_len;
+								self.stats.write().delete_ops += 1;
+								batch.delete_cf(cfs[c as usize], &key).map_err(other_io_err)?
+							},
 						}
 					};
 				}

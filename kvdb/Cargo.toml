@@ -9,3 +9,5 @@ license = "GPL-3.0"
 [dependencies]
 elastic-array = "0.10"
 parity-bytes = { version = "0.1", path = "../parity-bytes" }
+serde = "1.0"
+serde_derive = "1.0"

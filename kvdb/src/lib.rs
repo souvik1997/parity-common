@@ -18,12 +18,16 @@
 
 extern crate elastic_array;
 extern crate parity_bytes as bytes;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
 use elastic_array::{ElasticArray128, ElasticArray32};
 use bytes::Bytes;
+use serde::Serialize;
 
 /// Required length of prefixes.
 pub const PREFIX_LEN: usize = 12;
@@ -52,12 +56,14 @@ pub enum DBOp {
 	}
 }
 
-#[derive(Default, Clone, Copy, Eq, Debug, PartialEq)]
+#[derive(Default, Clone, Copy, Eq, Debug, PartialEq, Serialize)]
 pub struct DBStats {
 	pub read_ops: usize,
 	pub read_bytes: usize,
 	pub write_ops: usize,
-	pub write_bytes: usize
+	pub write_bytes: usize,
+	pub delete_ops: usize,
+	pub delete_bytes: usize,
 }
 
 impl<'a> ::std::ops::Sub<&'a DBStats> for DBStats {
@@ -67,8 +73,9 @@ impl<'a> ::std::ops::Sub<&'a DBStats> for DBStats {
 		self.read_ops -= other.read_ops;
 		self.read_bytes -= other.read_bytes;
 		self.write_ops -= other.write_ops;
-		self.write_bytes = other.write_bytes;
-
+		self.write_bytes -= other.write_bytes;
+		self.delete_ops -= other.delete_ops;
+		self.delete_bytes -= other.delete_bytes;
 		self
 	}
 }
@@ -79,7 +86,9 @@ impl<'a> ::std::ops::SubAssign<&'a DBStats> for DBStats {
 		self.read_ops -= other.read_ops;
 		self.read_bytes -= other.read_bytes;
 		self.write_ops -= other.write_ops;
-		self.write_bytes = other.write_bytes;
+		self.write_bytes -= other.write_bytes;
+		self.delete_ops -= other.delete_ops;
+		self.delete_bytes -= other.delete_bytes;
 	}
 }
 
