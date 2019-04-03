@@ -57,25 +57,49 @@ pub enum DBOp {
 }
 
 #[derive(Default, Clone, Copy, Eq, Debug, PartialEq, Serialize)]
+pub struct DBStatsEntry {
+	pub ops: usize,
+	pub cached_ops: usize,
+	pub bytes: usize,
+	pub cached_bytes: usize,
+}
+
+#[derive(Default, Clone, Copy, Eq, Debug, PartialEq, Serialize)]
 pub struct DBStats {
-	pub read_ops: usize,
-	pub read_bytes: usize,
-	pub write_ops: usize,
-	pub write_bytes: usize,
-	pub delete_ops: usize,
-	pub delete_bytes: usize,
+	pub read: DBStatsEntry,
+	pub write: DBStatsEntry,
+	pub delete: DBStatsEntry,
+}
+
+impl<'a> ::std::ops::Sub<&'a DBStatsEntry> for DBStatsEntry {
+	type Output = Self;
+
+	fn sub(mut self, other: &'a DBStatsEntry) -> Self {
+		self.ops -= other.ops;
+		self.bytes -= other.bytes;
+		self.cached_ops -= other.cached_ops;
+		self.cached_bytes -= other.cached_bytes;
+		self
+	}
+}
+
+impl<'a> ::std::ops::SubAssign<&'a DBStatsEntry> for DBStatsEntry {
+
+	fn sub_assign(&mut self, other: &'a DBStatsEntry) {
+		self.ops -= other.ops;
+		self.bytes -= other.bytes;
+		self.cached_ops -= other.cached_ops;
+		self.cached_bytes -= other.cached_bytes;
+	}
 }
 
 impl<'a> ::std::ops::Sub<&'a DBStats> for DBStats {
 	type Output = Self;
 
 	fn sub(mut self, other: &'a DBStats) -> Self {
-		self.read_ops -= other.read_ops;
-		self.read_bytes -= other.read_bytes;
-		self.write_ops -= other.write_ops;
-		self.write_bytes -= other.write_bytes;
-		self.delete_ops -= other.delete_ops;
-		self.delete_bytes -= other.delete_bytes;
+		self.read -= &other.read;
+		self.write -= &other.write;
+		self.delete -= &other.delete;
 		self
 	}
 }
@@ -83,12 +107,9 @@ impl<'a> ::std::ops::Sub<&'a DBStats> for DBStats {
 impl<'a> ::std::ops::SubAssign<&'a DBStats> for DBStats {
 
 	fn sub_assign(&mut self, other: &'a DBStats) {
-		self.read_ops -= other.read_ops;
-		self.read_bytes -= other.read_bytes;
-		self.write_ops -= other.write_ops;
-		self.write_bytes -= other.write_bytes;
-		self.delete_ops -= other.delete_ops;
-		self.delete_bytes -= other.delete_bytes;
+		self.read -= &other.read;
+		self.write -= &other.write;
+		self.delete -= &other.delete;
 	}
 }
 

@@ -411,10 +411,19 @@ impl Database {
 			match op {
 				DBOp::Insert { col, key, value } => {
 					let c = Self::to_overlay_column(col);
+					self.stats.write().write.cached_bytes += value.len();
+					self.stats.write().write.cached_ops += 1;
 					overlay[c].insert(key, KeyState::Insert(value));
 				},
 				DBOp::Delete { col, key } => {
 					let c = Self::to_overlay_column(col);
+					self.stats.write().delete.cached_ops += 1;
+					match overlay[c].get(&key) {
+						Some(&KeyState::Insert(ref value)) => {
+							self.stats.write().delete.cached_bytes += value.len();
+						}
+						_ => {}
+					}
 					overlay[c].insert(key, KeyState::Delete);
 				},
 			}
@@ -435,24 +444,24 @@ impl Database {
 									if c > 0 {
 										batch.delete_cf(cfs[c - 1], key).map_err(other_io_err)?;
 										let deleted_len = db.get_cf_opt(cfs[c - 1], key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
-										self.stats.write().delete_ops += 1;
-										self.stats.write().delete_bytes += deleted_len;
+										self.stats.write().delete.ops += 1;
+										self.stats.write().delete.bytes += deleted_len;
 									} else {
 										batch.delete(key).map_err(other_io_err)?;
 										let deleted_len = db.get_opt(key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
-										self.stats.write().delete_ops += 1;
-										self.stats.write().delete_bytes += deleted_len;
+										self.stats.write().delete.ops += 1;
+										self.stats.write().delete.bytes += deleted_len;
 									}
 								},
 								KeyState::Insert(ref value) => {
 									if c > 0 {
 										batch.put_cf(cfs[c - 1], key, value).map_err(other_io_err)?;
-										self.stats.write().write_ops += 1;
-										self.stats.write().write_bytes += value.len();
+										self.stats.write().write.ops += 1;
+										self.stats.write().write.bytes += value.len();
 									} else {
 										batch.put(key, value).map_err(other_io_err)?;
-										self.stats.write().write_ops += 1;
-										self.stats.write().write_bytes += value.len();
+										self.stats.write().write.ops += 1;
+										self.stats.write().write.bytes += value.len();
 									}
 								},
 							}
@@ -498,11 +507,11 @@ impl Database {
 				for op in ops {
 					// remove any buffered operation for this key
 					self.overlay.write()[Self::to_overlay_column(op.col())].remove(op.key());
-					self.stats.write().write_ops += 1;
+					self.stats.write().write.ops += 1;
 					match op {
 						DBOp::Insert { col, key, value } => {
-							self.stats.write().write_bytes += value.len();
-							self.stats.write().write_ops += 1;
+							self.stats.write().write.bytes += value.len();
+							self.stats.write().write.ops += 1;
 							match col {
 								None => batch.put(&key, &value).map_err(other_io_err)?,
 								Some(c) => batch.put_cf(cfs[c as usize], &key, &value).map_err(other_io_err)?,
@@ -511,14 +520,14 @@ impl Database {
 						DBOp::Delete { col, key } => match col {
 							None => {
 								let deleted_len = db.get_opt(&key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
-								self.stats.write().delete_bytes += deleted_len;
-								self.stats.write().delete_ops += 1;
+								self.stats.write().delete.bytes += deleted_len;
+								self.stats.write().delete.ops += 1;
 								batch.delete(&key).map_err(other_io_err)?
 							},
 							Some(c) => {
 								let deleted_len = db.get_cf_opt(cfs[c as usize], &key, &self.read_opts).ok().and_then(|r| r.map(|v| v.len())).unwrap_or(0);
-								self.stats.write().delete_bytes += deleted_len;
-								self.stats.write().delete_ops += 1;
+								self.stats.write().delete.bytes += deleted_len;
+								self.stats.write().delete.ops += 1;
 								batch.delete_cf(cfs[c as usize], &key).map_err(other_io_err)?
 							},
 						}
@@ -537,17 +546,28 @@ impl Database {
 			Some(DBAndColumns { ref db, ref cfs }) => {
 				let overlay = &self.overlay.read()[Self::to_overlay_column(col)];
 				match overlay.get(key) {
-					Some(&KeyState::Insert(ref value)) => Ok(Some(value.clone())),
-					Some(&KeyState::Delete) => Ok(None),
+					Some(&KeyState::Insert(ref value)) => {
+						self.stats.write().read.cached_ops += 1;
+						self.stats.write().read.cached_bytes += value.len();
+						Ok(Some(value.clone()))
+					}
+					Some(&KeyState::Delete) => {
+						self.stats.write().read.cached_ops += 1;
+						Ok(None)
+					}
 					None => {
 						let flushing = &self.flushing.read()[Self::to_overlay_column(col)];
 						match flushing.get(key) {
-							Some(&KeyState::Insert(ref value)) => Ok(Some(value.clone())),
+							Some(&KeyState::Insert(ref value)) => {
+								self.stats.write().read.cached_ops += 1;
+								self.stats.write().read.cached_bytes += value.len();
+								Ok(Some(value.clone()))
+							}
 							Some(&KeyState::Delete) => Ok(None),
 							None => {
 								col.map_or_else(
-									|| { self.stats.write().read_ops += 1; db.get_opt(key, &self.read_opts).map(|r| r.map(|v| { self.stats.write().read_bytes += v.len(); DBValue::from_slice(&v) }))},
-									|c| { self.stats.write().read_ops += 1; db.get_cf_opt(cfs[c as usize], key, &self.read_opts).map(|r| r.map(|v| {self.stats.write().read_bytes += v.len(); DBValue::from_slice(&v)})) })
+									|| { self.stats.write().read.ops += 1; db.get_opt(key, &self.read_opts).map(|r| r.map(|v| { self.stats.write().read.bytes += v.len(); DBValue::from_slice(&v) }))},
+									|c| { self.stats.write().read.ops += 1; db.get_cf_opt(cfs[c as usize], key, &self.read_opts).map(|r| r.map(|v| {self.stats.write().read.bytes += v.len(); DBValue::from_slice(&v)})) })
 									.map_err(other_io_err)
 							},
 						}
